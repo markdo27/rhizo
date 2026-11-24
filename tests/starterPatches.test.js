@@ -15,10 +15,14 @@ import { WelcomeWindow } from '../src/ui/WelcomeWindow.js';
  * ranges the registry declares.
  */
 describe('starter patches', () => {
-  it('offers three of them, with unique ids', () => {
-    expect(STARTER_PATCHES).toHaveLength(3);
+  it('offers curated templates with unique ids, categories, and preview swatches', () => {
+    expect(STARTER_PATCHES.length).toBeGreaterThanOrEqual(3);
     const ids = STARTER_PATCHES.map((entry) => entry.id);
-    expect(new Set(ids).size).toBe(3);
+    expect(new Set(ids).size).toBe(STARTER_PATCHES.length);
+    for (const entry of STARTER_PATCHES) {
+      expect(entry.category?.length).toBeGreaterThan(0);
+      expect(entry.previewGradient?.length).toBeGreaterThan(0);
+    }
   });
 
   it('gives every one a title and a sentence saying what it does', () => {

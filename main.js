@@ -16,6 +16,7 @@ import { showAccountDialog } from "./src/ui/accountSession.js";
 import { entitlements } from "./src/ai/entitlements.js";
 import { requireOutputFeature, checkOutputFeature } from "./src/ai/outputGating.js";
 import { WelcomeWindow } from "./src/ui/WelcomeWindow.js";
+import { SimpleModeStudio } from "./src/ui/SimpleModeStudio.js";
 import { Graph } from "./src/data/Graph.js";
 import { makeNode, NodeDefs, updateNodeIdCounter } from "./src/data/NodeDefs.js";
 import { SeedGraphBuilder } from "./src/utils/SeedGraphBuilder.js";
@@ -200,6 +201,7 @@ let saveLoadManager = null;
 let backupDialog = null;
 let fileManager = null;
 let welcomeWindow = null;
+let simpleModeStudio = null;
 let undoManager = null;
 let parameterEventSystem = null;
 let floatingPreview = null;
@@ -592,10 +594,29 @@ async function initialize() {
     backupDialog = new BackupDialog(saveLoadManager);
     fileManager = new FileManager(saveLoadManager);
 
+    const openStarterPatch = async (starter) => {
+      // Nodes hydrate with `params` assigned by reference (graphHydration.js
+      // clones `props` but not `params`), so passing the shared STARTER_PATCHES
+      // object straight through means editing a slider after opening a starter
+      // patch mutates that starter's definition for the rest of the session.
+      // Clone it here so every open starts from the untouched original.
+      const patch = typeof structuredClone === "function"
+        ? structuredClone(starter.patch)
+        : JSON.parse(JSON.stringify(starter.patch));
+      await replaceGraphWithPatch(patch, {
+        title: starter.title,
+        reason: "starter-patch",
+      });
+      simpleModeStudio?.setActiveTitle(starter.title);
+      simpleModeStudio?.refresh();
+    };
+
     welcomeWindow = new WelcomeWindow({
       saveLoadManager: saveLoadManager,
       onNewProject: () => {
         createNewProject();
+        simpleModeStudio?.setActiveTitle("New Visual");
+        simpleModeStudio?.refresh();
       },
       onOpenProject: () => {
         const fileInput = document.getElementById("file-import");
@@ -611,20 +632,7 @@ async function initialize() {
       // A starter patch replaces the document the same way a generated patch
       // does, so it takes the same path: a backup first, then the import, then
       // the view framed on what was just opened.
-      onOpenStarter: async (starter) => {
-        // Nodes hydrate with `params` assigned by reference (graphHydration.js
-        // clones `props` but not `params`), so passing the shared STARTER_PATCHES
-        // object straight through means editing a slider after opening a starter
-        // patch mutates that starter's definition for the rest of the session.
-        // Clone it here so every open starts from the untouched original.
-        const patch = typeof structuredClone === "function"
-          ? structuredClone(starter.patch)
-          : JSON.parse(JSON.stringify(starter.patch));
-        await replaceGraphWithPatch(patch, {
-          title: starter.title,
-          reason: "starter-patch",
-        });
-      },
+      onOpenStarter: openStarterPatch,
       onClose: () => {},
       storageKey: "rhizomium.welcome.dismissed"
     });
@@ -974,8 +982,30 @@ async function initialize() {
       refreshThumbnails: () => window.shaderPreviewManager?.refreshAllThumbnails?.(),
     });
 
-    // Show welcome window at startup if not dismissed
-    if (welcomeWindow) {
+    // Mount beginner-friendly Simple Studio mode alongside Pro Nodes.
+    try {
+      simpleModeStudio = new SimpleModeStudio({
+        graph,
+        editor,
+        gpuCanvas: document.getElementById("gpu-canvas"),
+        floatingPreview,
+        onOpenStarter: openStarterPatch,
+        onGraphStructureChanged: async () => {
+          await updateShaderFromGraph();
+          editor.markDirty?.("simple-studio");
+          editor.draw?.();
+        },
+        onStatus: updateStatus,
+      });
+      simpleModeStudio.mount();
+      window.simpleModeStudio = simpleModeStudio;
+    } catch (error) {
+      console.error("ERROR mounting SimpleModeStudio:", error);
+    }
+
+    // Show welcome window at startup in Pro mode if not dismissed.
+    // In Simple Studio mode, the live visual + Templates button is already on screen.
+    if (welcomeWindow && !simpleModeStudio?.isSimpleMode()) {
       const shouldShow = welcomeWindow.shouldShow();
       if (shouldShow) {
         try {
@@ -984,7 +1014,7 @@ async function initialize() {
           console.error("ERROR showing welcome window at startup:", error);
         }
       }
-    } else {
+    } else if (!welcomeWindow) {
       console.error("ERROR: welcomeWindow not initialized!");
     }
 
